@@ -28,6 +28,17 @@ def _inject_button_styles() -> None:
             border-color: #5b21b6;
             color: #ffffff;
         }
+
+        div[data-testid="stTextArea"] textarea:focus {
+            border-color: #7c3aed !important;
+            box-shadow: 0 0 0 1px #7c3aed !important;
+        }
+
+        div[data-testid="stTextArea"] textarea:focus-visible {
+            outline: none !important;
+            border-color: #7c3aed !important;
+            box-shadow: 0 0 0 1px #7c3aed !important;
+        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -68,7 +79,7 @@ def main() -> None:
         st.json(profile.model_dump())
 
     user_question = st.text_area(
-        "Ask an analytical question",
+        "Ask your query",
         placeholder=(
             "Example: How many people boarded from C and survived?\n"
             "Example: Show me a comparison plot between males and females by embarked port."
@@ -95,6 +106,9 @@ def main() -> None:
 
         st.subheader("Answer")
         st.write(result.answer_text)
+
+        if result.note_text:
+            st.info(result.note_text)
 
         if result.debug_text:
             with st.expander("Model debug output"):

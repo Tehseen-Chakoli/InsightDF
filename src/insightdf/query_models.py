@@ -35,3 +35,8 @@ class QueryPlan(BaseModel):
 class AnalysisResult(BaseModel):
     answer_text: str
     generated_sql: str | None = None
+
+
+class GuardedQuestionResult(BaseModel):
+    resolved_question: str
+    note: str | None = None

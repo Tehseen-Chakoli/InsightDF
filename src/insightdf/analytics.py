@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 
 import duckdb
 import pandas as pd
@@ -8,7 +9,7 @@ import plotly.express as px
 
 from src.insightdf.errors import QueryPlanParseError
 from src.insightdf.llm import generate_query_plan
-from src.insightdf.question_guard import validate_question_against_schema
+from src.insightdf.question_guard import prepare_question_for_analysis
 from src.insightdf.query_models import DatasetProfile
 from src.insightdf.sql_guard import validate_read_only_sql
 
@@ -20,6 +21,7 @@ class AnalysisOutput:
     table: pd.DataFrame | None
     figure: object | None
     debug_text: str | None = None
+    note_text: str | None = None
 
 
 def run_analysis(
@@ -28,10 +30,17 @@ def run_analysis(
     user_question: str,
 ) -> AnalysisOutput:
     """Plan the analysis, execute it against DuckDB, and format the response."""
-    validate_question_against_schema(profile=profile, user_question=user_question)
+    prepared_question = prepare_question_for_analysis(
+        profile=profile,
+        dataframe=dataframe,
+        user_question=user_question,
+    )
 
     try:
-        query_plan = generate_query_plan(profile=profile, user_question=user_question)
+        query_plan = generate_query_plan(
+            profile=profile,
+            user_question=prepared_question.resolved_question,
+        )
     except QueryPlanParseError as error:
         return AnalysisOutput(
             answer_text=str(error),
@@ -39,16 +48,24 @@ def run_analysis(
             table=None,
             figure=None,
             debug_text=error.raw_response,
+            note_text=prepared_question.note,
         )
 
-    safe_sql = validate_read_only_sql(query_plan.sql)
+    repaired_sql = _quote_special_columns(query_plan.sql, dataframe.columns)
+    safe_sql = validate_read_only_sql(repaired_sql)
 
     connection = duckdb.connect(database=":memory:")
     # Register the uploaded dataframe as a virtual SQL table for deterministic computation.
     connection.register("dataset", dataframe)
-    result_table = connection.execute(safe_sql).df()
+    try:
+        result_table = connection.execute(safe_sql).df()
+    except duckdb.Error as error:
+        raise ValueError(
+            "I could not run the generated query on this dataset. "
+            "Please try a more specific question or use exact field/value names from the uploaded data."
+        ) from error
 
-    answer_text = _format_answer(result_table, query_plan.answer_template, user_question)
+    answer_text = _format_answer(result_table, query_plan.answer_template, prepared_question.resolved_question)
     figure = _build_figure(result_table, query_plan)
 
     return AnalysisOutput(
@@ -56,6 +73,7 @@ def run_analysis(
         generated_sql=safe_sql,
         table=result_table,
         figure=figure,
+        note_text=prepared_question.note,
     )
 
 
@@ -113,3 +131,20 @@ def _build_figure(result_table: pd.DataFrame, query_plan) -> object | None:
         color=query_plan.series_column,
         barmode="group",
     )
+
+
+def _quote_special_columns(sql: str, columns: pd.Index) -> str:
+    """Repair generated SQL when a column name contains spaces or punctuation."""
+    repaired_sql = sql
+
+    for column in sorted((str(value) for value in columns), key=len, reverse=True):
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", column):
+            continue
+
+        repaired_sql = re.sub(
+            rf'(?<!")\b{re.escape(column)}\b(?!")',
+            f'"{column}"',
+            repaired_sql,
+        )
+
+    return repaired_sql
