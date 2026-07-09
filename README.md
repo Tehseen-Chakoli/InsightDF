@@ -9,6 +9,7 @@ InsightDF is a modular Streamlit app that lets a user upload a CSV or Excel data
 - Converts natural-language questions into safe read-only SQL
 - Executes the generated query against the uploaded dataset with DuckDB
 - Returns scalar answers, tabular outputs, and comparison charts
+- Uses LangChain with Groq by default so the model layer can be swapped later with minimal app changes
 
 ## Example questions
 
@@ -37,15 +38,17 @@ InsightDF/
 ## Setup
 
 ```bash
-python -m venv .venv
+python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Set your OpenAI API key:
+Create a local `.env` file and add your Groq API key:
 
 ```bash
-export OPENAI_API_KEY="your_api_key_here"
+GROQ_API_KEY=your_groq_api_key_here
+INSIGHTDF_LLM_PROVIDER=groq
+INSIGHTDF_GROQ_MODEL=llama-3.1-8b-instant
 ```
 
 ## Run
@@ -59,3 +62,4 @@ streamlit run app.py
 - The app is dataset-agnostic, but best results come from clean column names and meaningful categorical values.
 - SQL execution is guarded so only read-only analytical queries are allowed.
 - If the uploaded file does not already have a useful semantic column like `survived`, the app can still answer questions as long as the intent can be mapped from the dataset schema.
+- The current provider abstraction defaults to Groq through LangChain, and new providers can be added in `src/insightdf/llm.py`.

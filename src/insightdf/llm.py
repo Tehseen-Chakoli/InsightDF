@@ -3,9 +3,10 @@ from __future__ import annotations
 import json
 import os
 
-from openai import OpenAI
+from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_groq import ChatGroq
 
-from src.insightdf.config import DEFAULT_OPENAI_MODEL
+from src.insightdf.config import DEFAULT_GROQ_MODEL, DEFAULT_LLM_PROVIDER
 from src.insightdf.query_models import DatasetProfile, QueryPlan
 
 
@@ -34,29 +35,45 @@ Rules:
 """.strip()
 
 
+def _build_chat_model():
+    """Create the configured chat model behind a provider-agnostic interface."""
+    provider = DEFAULT_LLM_PROVIDER.lower().strip()
+
+    if provider == "groq":
+        api_key = os.getenv("GROQ_API_KEY")
+        if not api_key:
+            raise RuntimeError(
+                "GROQ_API_KEY is not set. Add it to your local .env file before using the app."
+            )
+        return ChatGroq(model=DEFAULT_GROQ_MODEL, api_key=api_key, temperature=0)
+
+    raise RuntimeError(
+        f"Unsupported LLM provider: {DEFAULT_LLM_PROVIDER}. "
+        "Add a new provider in src/insightdf/llm.py to switch models later."
+    )
+
+
 def generate_query_plan(profile: DatasetProfile, user_question: str) -> QueryPlan:
     """Ask the language model for a structured analytical plan."""
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        raise RuntimeError(
-            "OPENAI_API_KEY is not set. Add your API key before using natural-language analysis."
-        )
-
-    client = OpenAI(api_key=api_key)
+    chat_model = _build_chat_model()
     prompt = {
         # The model sees only a compact schema summary so we avoid sending the full dataset.
         "dataset_profile": profile.model_dump(),
         "user_question": user_question,
     }
 
-    response = client.responses.create(
-        model=DEFAULT_OPENAI_MODEL,
-        input=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": json.dumps(prompt)},
-        ],
+    response = chat_model.invoke(
+        [
+            SystemMessage(content=SYSTEM_PROMPT),
+            HumanMessage(content=json.dumps(prompt)),
+        ]
     )
 
-    response_text = response.output_text.strip()
-    response_text = response_text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+    response_text = str(response.content).strip()
+    response_text = (
+        response_text.removeprefix("```json")
+        .removeprefix("```")
+        .removesuffix("```")
+        .strip()
+    )
     return QueryPlan.model_validate_json(response_text)
