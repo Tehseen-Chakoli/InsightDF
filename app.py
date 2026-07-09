@@ -72,6 +72,10 @@ def main() -> None:
         st.subheader("Answer")
         st.write(result.answer_text)
 
+        if result.debug_text:
+            with st.expander("Model debug output"):
+                st.code(result.debug_text)
+
         if result.generated_sql:
             with st.expander("Generated SQL"):
                 st.code(result.generated_sql, language="sql")

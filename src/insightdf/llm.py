@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import json
 import os
+import re
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_groq import ChatGroq
+from pydantic import ValidationError
 
 from src.insightdf.config import DEFAULT_GROQ_MODEL, DEFAULT_LLM_PROVIDER
+from src.insightdf.errors import QueryPlanParseError
 from src.insightdf.query_models import DatasetProfile, QueryPlan
 
 
@@ -33,6 +36,11 @@ Rules:
     "series_column": "..." | null
   }
 """.strip()
+
+RETRY_PROMPT = (
+    "Your previous response was not valid JSON for the required schema. "
+    "Return only one valid JSON object with no explanation, no markdown, and no extra text."
+)
 
 
 def _build_chat_model():
@@ -62,18 +70,45 @@ def generate_query_plan(profile: DatasetProfile, user_question: str) -> QueryPla
         "user_question": user_question,
     }
 
-    response = chat_model.invoke(
-        [
-            SystemMessage(content=SYSTEM_PROMPT),
-            HumanMessage(content=json.dumps(prompt)),
-        ]
+    messages = [
+        SystemMessage(content=SYSTEM_PROMPT),
+        HumanMessage(content=json.dumps(prompt)),
+    ]
+
+    last_response_text = ""
+    for attempt in range(2):
+        response = chat_model.invoke(messages)
+        last_response_text = str(response.content).strip()
+
+        try:
+            return QueryPlan.model_validate_json(_extract_json_object(last_response_text))
+        except (ValidationError, ValueError):
+            if attempt == 0:
+                # Retry once with a stronger correction prompt before surfacing a user-facing error.
+                messages.append(HumanMessage(content=RETRY_PROMPT))
+                continue
+
+    raise QueryPlanParseError(
+        "The language model returned an invalid analysis plan. "
+        "Try rephrasing the question or using a model with stronger JSON reliability.",
+        raw_response=last_response_text,
     )
 
-    response_text = str(response.content).strip()
-    response_text = (
+
+def _extract_json_object(response_text: str) -> str:
+    """Extract the first JSON object even when the model wraps it with prose or markdown."""
+    cleaned_text = (
         response_text.removeprefix("```json")
         .removeprefix("```")
         .removesuffix("```")
         .strip()
     )
-    return QueryPlan.model_validate_json(response_text)
+
+    if cleaned_text.startswith("{") and cleaned_text.endswith("}"):
+        return cleaned_text
+
+    match = re.search(r"\{.*\}", cleaned_text, re.DOTALL)
+    if match:
+        return match.group(0)
+
+    raise ValueError("No JSON object found in the model response.")

@@ -6,7 +6,9 @@ import duckdb
 import pandas as pd
 import plotly.express as px
 
+from src.insightdf.errors import QueryPlanParseError
 from src.insightdf.llm import generate_query_plan
+from src.insightdf.question_guard import validate_question_against_schema
 from src.insightdf.query_models import DatasetProfile
 from src.insightdf.sql_guard import validate_read_only_sql
 
@@ -17,6 +19,7 @@ class AnalysisOutput:
     generated_sql: str | None
     table: pd.DataFrame | None
     figure: object | None
+    debug_text: str | None = None
 
 
 def run_analysis(
@@ -25,7 +28,19 @@ def run_analysis(
     user_question: str,
 ) -> AnalysisOutput:
     """Plan the analysis, execute it against DuckDB, and format the response."""
-    query_plan = generate_query_plan(profile=profile, user_question=user_question)
+    validate_question_against_schema(profile=profile, user_question=user_question)
+
+    try:
+        query_plan = generate_query_plan(profile=profile, user_question=user_question)
+    except QueryPlanParseError as error:
+        return AnalysisOutput(
+            answer_text=str(error),
+            generated_sql=None,
+            table=None,
+            figure=None,
+            debug_text=error.raw_response,
+        )
+
     safe_sql = validate_read_only_sql(query_plan.sql)
 
     connection = duckdb.connect(database=":memory:")
