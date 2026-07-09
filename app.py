@@ -11,8 +11,32 @@ from src.insightdf.schema import build_dataset_profile
 st.set_page_config(page_title=APP_TITLE, page_icon="📊", layout="wide")
 
 
+def _inject_button_styles() -> None:
+    """Give the primary action a clearer violet visual treatment."""
+    st.markdown(
+        """
+        <style>
+        div[data-testid="stButton"] > button[kind="primary"] {
+            background: linear-gradient(135deg, #6d28d9, #8b5cf6);
+            border: 1px solid #6d28d9;
+            color: #ffffff;
+            font-weight: 600;
+        }
+
+        div[data-testid="stButton"] > button[kind="primary"]:hover {
+            background: linear-gradient(135deg, #5b21b6, #7c3aed);
+            border-color: #5b21b6;
+            color: #ffffff;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def main() -> None:
     """Render the Streamlit application."""
+    _inject_button_styles()
     st.title(APP_TITLE)
     st.caption(
         "Upload any CSV or Excel dataset, ask analytical questions in natural language, "
