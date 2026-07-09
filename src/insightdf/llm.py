@@ -22,6 +22,11 @@ Rules:
 - The SQL must be read-only and must query only the table named dataset.
 - Prefer exact counts, sums, averages, minimums, maximums, filters, grouping, and ordering when needed.
 - Use quoted identifiers for column names.
+- Never invent a country, code, year, or filter that is not present in the user's question.
+- If the user mentions a year, preserve that exact year in the SQL.
+- If the user mentions a named entity like a country, preserve that exact entity or its matching code in the SQL.
+- If the user asks for a metric value like population, prefer selecting the metric column instead of COUNT(*).
+- Use COUNT(*) only when the user is explicitly asking how many rows, records, or groups exist.
 - When the user asks for a comparison or plot, produce grouped SQL suitable for plotting.
 - If a dataset does not contain the exact words used by the user, infer the closest matching columns and values from the schema.
 - The output JSON must match this shape:

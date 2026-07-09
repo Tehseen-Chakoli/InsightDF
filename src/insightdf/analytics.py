@@ -12,6 +12,7 @@ from src.insightdf.llm import generate_query_plan
 from src.insightdf.question_guard import prepare_question_for_analysis
 from src.insightdf.query_models import DatasetProfile
 from src.insightdf.sql_guard import validate_read_only_sql
+from src.insightdf.time_series import build_time_series_query_plan, validate_sql_against_question
 
 
 @dataclass
@@ -36,22 +37,36 @@ def run_analysis(
         user_question=user_question,
     )
 
-    try:
-        query_plan = generate_query_plan(
-            profile=profile,
-            user_question=prepared_question.resolved_question,
-        )
-    except QueryPlanParseError as error:
-        return AnalysisOutput(
-            answer_text=str(error),
-            generated_sql=None,
-            table=None,
-            figure=None,
-            debug_text=error.raw_response,
-            note_text=prepared_question.note,
-        )
+    deterministic_plan = build_time_series_query_plan(
+        dataframe=dataframe,
+        profile=profile,
+        user_question=prepared_question.resolved_question,
+    )
+    if deterministic_plan is not None:
+        query_plan = deterministic_plan
+    else:
+        try:
+            query_plan = generate_query_plan(
+                profile=profile,
+                user_question=prepared_question.resolved_question,
+            )
+        except QueryPlanParseError as error:
+            return AnalysisOutput(
+                answer_text=str(error),
+                generated_sql=None,
+                table=None,
+                figure=None,
+                debug_text=error.raw_response,
+                note_text=prepared_question.note,
+            )
 
     repaired_sql = _quote_special_columns(query_plan.sql, dataframe.columns)
+    validate_sql_against_question(
+        sql=repaired_sql,
+        user_question=prepared_question.resolved_question,
+        dataframe=dataframe,
+        profile=profile,
+    )
     safe_sql = validate_read_only_sql(repaired_sql)
 
     connection = duckdb.connect(database=":memory:")
