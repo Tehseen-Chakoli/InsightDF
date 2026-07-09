@@ -11,39 +11,8 @@ from src.insightdf.schema import build_dataset_profile
 st.set_page_config(page_title=APP_TITLE, page_icon="📊", layout="wide")
 
 
-def _inject_custom_styles() -> None:
-    """Apply a lightweight visual treatment to the main call-to-action."""
-    st.markdown(
-        """
-        <style>
-        .stApp {
-            background:
-                radial-gradient(circle at top right, rgba(139, 92, 246, 0.10), transparent 32%),
-                radial-gradient(circle at top left, rgba(167, 139, 250, 0.10), transparent 26%),
-                #f8f7ff;
-        }
-
-        div[data-testid="stButton"] > button[kind="primary"] {
-            background: linear-gradient(135deg, #6d28d9, #8b5cf6);
-            border: 1px solid #6d28d9;
-            color: #ffffff;
-            font-weight: 600;
-            box-shadow: 0 10px 22px rgba(109, 40, 217, 0.22);
-        }
-
-        div[data-testid="stButton"] > button[kind="primary"]:hover {
-            background: linear-gradient(135deg, #5b21b6, #7c3aed);
-            border-color: #5b21b6;
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
 def main() -> None:
     """Render the Streamlit application."""
-    _inject_custom_styles()
     st.title(APP_TITLE)
     st.caption(
         "Upload any CSV or Excel dataset, ask analytical questions in natural language, "
@@ -71,10 +40,15 @@ def main() -> None:
             st.metric("Rows", f"{profile.row_count:,}")
             st.metric("Columns", f"{profile.column_count:,}")
 
+    with st.expander("Detected schema"):
+        st.json(profile.model_dump())
+
     user_question = st.text_area(
         "Ask an analytical question",
-        value="Example: How many people boarded from C and survived?",
-        help="Replace the example with your own question once the dataset is uploaded.",
+        placeholder=(
+            "Example: How many people boarded from C and survived?\n"
+            "Example: Show me a comparison plot between males and females by embarked port."
+        ),
         height=120,
     )
 
