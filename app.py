@@ -58,6 +58,7 @@ def main() -> None:
             return
 
         try:
+            # Keep the app flow thin here and delegate the heavy lifting to the analytics layer.
             with st.spinner("Understanding the dataset and running the analysis..."):
                 result = run_analysis(
                     dataframe=dataframe,

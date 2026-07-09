@@ -29,6 +29,7 @@ def run_analysis(
     safe_sql = validate_read_only_sql(query_plan.sql)
 
     connection = duckdb.connect(database=":memory:")
+    # Register the uploaded dataframe as a virtual SQL table for deterministic computation.
     connection.register("dataset", dataframe)
     result_table = connection.execute(safe_sql).df()
 

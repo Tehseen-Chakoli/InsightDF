@@ -44,6 +44,7 @@ def generate_query_plan(profile: DatasetProfile, user_question: str) -> QueryPla
 
     client = OpenAI(api_key=api_key)
     prompt = {
+        # The model sees only a compact schema summary so we avoid sending the full dataset.
         "dataset_profile": profile.model_dump(),
         "user_question": user_question,
     }
