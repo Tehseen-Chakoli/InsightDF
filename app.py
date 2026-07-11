@@ -80,10 +80,7 @@ def main() -> None:
 
     user_question = st.text_area(
         "Ask your query",
-        placeholder=(
-            "Example: How many people boarded from C and survived?\n"
-            "Example: Show me a comparison plot between males and females by embarked port."
-        ),
+        placeholder="Example: What is the average sales amount for each region?",
         height=120,
     )
 

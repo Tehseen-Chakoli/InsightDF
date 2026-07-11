@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from src.insightdf.query_models import ColumnProfile, DatasetProfile
+from src.insightdf.query_models import ColumnProfile, DatasetProfile, NumericSummary
 
 
 def build_dataset_profile(dataframe: pd.DataFrame) -> DatasetProfile:
@@ -15,6 +15,10 @@ def build_dataset_profile(dataframe: pd.DataFrame) -> DatasetProfile:
             str(value)
             for value in series.dropna().astype(str).head(5).tolist()
         ]
+        top_values = [
+            str(value)
+            for value in series.dropna().astype(str).value_counts().head(5).index.tolist()
+        ]
         columns.append(
             ColumnProfile(
                 name=str(column_name),
@@ -22,11 +26,36 @@ def build_dataset_profile(dataframe: pd.DataFrame) -> DatasetProfile:
                 non_null_count=int(series.notna().sum()),
                 unique_count=int(series.nunique(dropna=True)),
                 sample_values=sample_values,
+                top_values=top_values,
+                numeric_summary=_build_numeric_summary(series),
             )
         )
+
+    sample_rows = [
+        {str(column): str(value) for column, value in row.items()}
+        for row in dataframe.head(3).to_dict(orient="records")
+    ]
 
     return DatasetProfile(
         row_count=int(len(dataframe)),
         column_count=int(len(dataframe.columns)),
         columns=columns,
+        sample_rows=sample_rows,
+    )
+
+
+def _build_numeric_summary(series: pd.Series) -> NumericSummary | None:
+    if not pd.api.types.is_numeric_dtype(series):
+        return None
+
+    cleaned_series = series.dropna()
+    if cleaned_series.empty:
+        return NumericSummary()
+
+    return NumericSummary(
+        min_value=float(cleaned_series.min()),
+        max_value=float(cleaned_series.max()),
+        mean_value=float(cleaned_series.mean()),
+        median_value=float(cleaned_series.median()),
+        sum_value=float(cleaned_series.sum()),
     )

@@ -5,18 +5,29 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 
+class NumericSummary(BaseModel):
+    min_value: float | None = None
+    max_value: float | None = None
+    mean_value: float | None = None
+    median_value: float | None = None
+    sum_value: float | None = None
+
+
 class ColumnProfile(BaseModel):
     name: str
     dtype: str
     non_null_count: int
     unique_count: int
     sample_values: list[str] = Field(default_factory=list)
+    top_values: list[str] = Field(default_factory=list)
+    numeric_summary: NumericSummary | None = None
 
 
 class DatasetProfile(BaseModel):
     row_count: int
     column_count: int
     columns: list[ColumnProfile]
+    sample_rows: list[dict[str, str]] = Field(default_factory=list)
 
 
 class QueryPlan(BaseModel):

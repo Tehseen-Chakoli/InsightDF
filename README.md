@@ -13,9 +13,9 @@ InsightDF is a modular Streamlit app that lets a user upload a CSV or Excel data
 
 ## Example questions
 
-- `How many passengers boarded from C and survived?`
-- `What is the average fare for female passengers in first class?`
-- `Show me the comparison plot between survived males and females who boarded from C and belong to upper middle class.`
+- `What is the average sales amount for each region?`
+- `How many records have status completed?`
+- `Show me a comparison plot of revenue by category.`
 
 ## Project structure
 
@@ -61,5 +61,4 @@ streamlit run app.py
 
 - The app is dataset-agnostic, but best results come from clean column names and meaningful categorical values.
 - SQL execution is guarded so only read-only analytical queries are allowed.
-- If the uploaded file does not already have a useful semantic column like `survived`, the app can still answer questions as long as the intent can be mapped from the dataset schema.
 - The current provider abstraction defaults to Groq through LangChain, and new providers can be added in `src/insightdf/llm.py`.
