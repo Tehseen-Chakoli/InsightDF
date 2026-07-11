@@ -9,6 +9,7 @@ import plotly.express as px
 
 from src.insightdf.errors import QueryPlanParseError
 from src.insightdf.llm import generate_query_plan
+from src.insightdf.plot_guard import prepare_plot_frame, repair_plot_sql
 from src.insightdf.question_guard import prepare_question_for_analysis
 from src.insightdf.query_models import DatasetProfile
 from src.insightdf.sql_guard import validate_read_only_sql
@@ -52,6 +53,8 @@ def run_analysis(
         )
 
     repaired_sql = _quote_special_columns(query_plan.sql, dataframe.columns)
+    if query_plan.analysis_type == "chart":
+        repaired_sql = repair_plot_sql(repaired_sql)
     safe_sql = validate_read_only_sql(repaired_sql)
 
     connection = duckdb.connect(database=":memory:")
@@ -104,31 +107,38 @@ def _build_figure(result_table: pd.DataFrame, query_plan) -> object | None:
     if query_plan.analysis_type != "chart":
         return None
 
-    if result_table.empty or not query_plan.x_column or not query_plan.y_column:
+    if result_table.empty:
         return None
+
+    plot_frame = prepare_plot_frame(
+        result_table=result_table,
+        x_column=query_plan.x_column,
+        y_column=query_plan.y_column,
+        series_column=query_plan.series_column,
+    )
 
     if query_plan.chart_type == "line":
         return px.line(
-            result_table,
-            x=query_plan.x_column,
-            y=query_plan.y_column,
-            color=query_plan.series_column,
+            plot_frame.dataframe,
+            x=plot_frame.x_column,
+            y=plot_frame.y_column,
+            color=plot_frame.series_column,
             markers=True,
         )
 
     if query_plan.chart_type == "scatter":
         return px.scatter(
-            result_table,
-            x=query_plan.x_column,
-            y=query_plan.y_column,
-            color=query_plan.series_column,
+            plot_frame.dataframe,
+            x=plot_frame.x_column,
+            y=plot_frame.y_column,
+            color=plot_frame.series_column,
         )
 
     return px.bar(
-        result_table,
-        x=query_plan.x_column,
-        y=query_plan.y_column,
-        color=query_plan.series_column,
+        plot_frame.dataframe,
+        x=plot_frame.x_column,
+        y=plot_frame.y_column,
+        color=plot_frame.series_column,
         barmode="group",
     )
 

@@ -11,6 +11,21 @@ from src.insightdf.schema import build_dataset_profile
 st.set_page_config(page_title=APP_TITLE, page_icon="📊", layout="wide")
 
 
+def _get_dataset_key(uploaded_file) -> str:
+    """Build a stable key so chat history resets only when the uploaded file changes."""
+    return f"{uploaded_file.name}:{uploaded_file.size}"
+
+
+def _initialize_session_state(dataset_key: str) -> None:
+    """Prepare per-dataset chat history storage in Streamlit session state."""
+    current_dataset_key = st.session_state.get("dataset_key")
+    if current_dataset_key != dataset_key:
+        st.session_state["dataset_key"] = dataset_key
+        st.session_state["analysis_history"] = []
+
+    st.session_state.setdefault("analysis_history", [])
+
+
 def _inject_button_styles() -> None:
     """Give the primary action a clearer violet visual treatment."""
     st.markdown(
@@ -45,6 +60,34 @@ def _inject_button_styles() -> None:
     )
 
 
+def _render_analysis_entry(entry_number: int, question: str, result) -> None:
+    """Render one question/answer block from the persisted analysis history."""
+    st.markdown(f"### Query {entry_number}")
+    st.write(f"**Question:** {question}")
+
+    st.subheader("Answer")
+    st.write(result.answer_text)
+
+    if result.note_text:
+        st.info(result.note_text)
+
+    if result.debug_text:
+        with st.expander("Model debug output"):
+            st.code(result.debug_text)
+
+    if result.generated_sql:
+        with st.expander("Generated SQL"):
+            st.code(result.generated_sql, language="sql")
+
+    if result.table is not None and not result.table.empty:
+        st.subheader("Result table")
+        st.dataframe(result.table, use_container_width=True)
+
+    if result.figure is not None:
+        st.subheader("Visualization")
+        st.plotly_chart(result.figure, use_container_width=True)
+
+
 def main() -> None:
     """Render the Streamlit application."""
     _inject_button_styles()
@@ -63,6 +106,8 @@ def main() -> None:
     if uploaded_file is None:
         st.info("Upload a dataset to begin asking questions.")
         return
+
+    _initialize_session_state(_get_dataset_key(uploaded_file))
 
     dataframe = load_uploaded_file(uploaded_file)
     profile = build_dataset_profile(dataframe)
@@ -101,27 +146,19 @@ def main() -> None:
             st.error(str(error))
             return
 
-        st.subheader("Answer")
-        st.write(result.answer_text)
+        st.session_state["analysis_history"].append(
+            {
+                "question": user_question.strip(),
+                "result": result,
+            }
+        )
 
-        if result.note_text:
-            st.info(result.note_text)
-
-        if result.debug_text:
-            with st.expander("Model debug output"):
-                st.code(result.debug_text)
-
-        if result.generated_sql:
-            with st.expander("Generated SQL"):
-                st.code(result.generated_sql, language="sql")
-
-        if result.table is not None and not result.table.empty:
-            st.subheader("Result table")
-            st.dataframe(result.table, use_container_width=True)
-
-        if result.figure is not None:
-            st.subheader("Visualization")
-            st.plotly_chart(result.figure, use_container_width=True)
+    for index, entry in enumerate(st.session_state["analysis_history"], start=1):
+        _render_analysis_entry(
+            entry_number=index,
+            question=entry["question"],
+            result=entry["result"],
+        )
 
 
 if __name__ == "__main__":
