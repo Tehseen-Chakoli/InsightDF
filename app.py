@@ -60,9 +60,18 @@ def _inject_button_styles() -> None:
     )
 
 
+def _get_query_heading(entry_number: int) -> str:
+    """Return a friendly heading for the latest visible query entries."""
+    if entry_number == 1:
+        return "Recent asked query"
+    if entry_number == 2:
+        return "Previous asked query"
+    return f"Older asked query {entry_number - 2}"
+
+
 def _render_analysis_entry(entry_number: int, question: str, result) -> None:
     """Render one question/answer block from the persisted analysis history."""
-    st.markdown(f"### Query {entry_number}")
+    st.markdown(f"### {_get_query_heading(entry_number)}")
     st.write(f"**Question:** {question}")
 
     st.subheader("Answer")
@@ -153,7 +162,9 @@ def main() -> None:
             }
         )
 
-    for index, entry in enumerate(st.session_state["analysis_history"], start=1):
+    history_entries = list(reversed(st.session_state["analysis_history"]))
+
+    for index, entry in enumerate(history_entries, start=1):
         _render_analysis_entry(
             entry_number=index,
             question=entry["question"],
