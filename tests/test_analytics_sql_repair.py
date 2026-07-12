@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import pandas as pd
 
-from src.insightdf.analytics import _quote_special_columns
+from src.insightdf.analytics import _build_figures, _quote_special_columns
 from src.insightdf.plot_guard import prepare_plot_frame, repair_plot_sql
-from src.insightdf.query_models import NumericSummary
+from src.insightdf.query_models import NumericSummary, QueryPlan
 from src.insightdf.schema import build_dataset_profile
 
 
@@ -77,3 +77,30 @@ def test_prepare_plot_frame_flattens_single_item_lists_for_numeric_plotting() ->
     assert plot_frame.y_column == "population"
     assert plot_frame.series_column == "Entity"
     assert plot_frame.dataframe["population"].tolist() == [7776182, 353870058]
+
+
+def test_build_figures_adds_faceted_breakdown_for_multi_dimension_chart_results() -> None:
+    result_table = pd.DataFrame(
+        {
+            "Embarked": ["C", "C", "S", "S"],
+            "Sex": ["female", "male", "female", "male"],
+            "Pclass": [1, 1, 2, 2],
+            "survived_count": [15, 5, 40, 18],
+        }
+    )
+    query_plan = QueryPlan(
+        analysis_type="chart",
+        sql="SELECT 1",
+        reasoning="chart",
+        chart_type="bar",
+        x_column="Embarked",
+        y_column="survived_count",
+        series_column="Sex",
+    )
+
+    chart_outputs = _build_figures(result_table, query_plan)
+
+    assert chart_outputs is not None
+    assert len(chart_outputs) == 2
+    assert "Survived Count By Embarked And Sex" == chart_outputs[0].title
+    assert "split by Pclass" in chart_outputs[1].title

@@ -92,9 +92,11 @@ def _render_analysis_entry(entry_number: int, question: str, result) -> None:
         st.subheader("Result table")
         st.dataframe(result.table, use_container_width=True)
 
-    if result.figure is not None:
+    if result.figures:
         st.subheader("Visualization")
-        st.plotly_chart(result.figure, use_container_width=True)
+        for chart_output in result.figures:
+            st.markdown(f"#### {chart_output.title}")
+            st.plotly_chart(chart_output.figure, use_container_width=True)
 
 
 def main() -> None:

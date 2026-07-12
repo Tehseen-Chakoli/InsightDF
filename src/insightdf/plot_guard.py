@@ -13,6 +13,7 @@ class PlotFrame:
     x_column: str
     y_column: str
     series_column: str | None = None
+    categorical_columns: list[str] | None = None
 
 
 def repair_plot_sql(sql: str) -> str:
@@ -77,6 +78,10 @@ def prepare_plot_frame(
         x_column=resolved_x,
         y_column=resolved_y,
         series_column=resolved_series,
+        categorical_columns=_collect_categorical_columns(
+            normalized_table,
+            excluded={resolved_x, resolved_y, resolved_series},
+        ),
     )
 
 
@@ -156,3 +161,19 @@ def _infer_series_column(dataframe: pd.DataFrame, excluded: set[str | None]) -> 
         if not is_numeric_dtype(dataframe[column]) and dataframe[column].nunique(dropna=True) > 1:
             return str(column)
     return None
+
+
+def _collect_categorical_columns(dataframe: pd.DataFrame, excluded: set[str | None]) -> list[str]:
+    columns: list[str] = []
+    for column in dataframe.columns:
+        if column in excluded:
+            continue
+        unique_count = dataframe[column].nunique(dropna=True)
+        if unique_count <= 1:
+            continue
+        if not is_numeric_dtype(dataframe[column]):
+            columns.append(str(column))
+            continue
+        if unique_count <= 8:
+            columns.append(str(column))
+    return columns

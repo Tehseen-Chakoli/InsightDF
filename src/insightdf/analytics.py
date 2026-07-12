@@ -6,6 +6,7 @@ import re
 import duckdb
 import pandas as pd
 import plotly.express as px
+from plotly.graph_objects import Figure
 
 from src.insightdf.errors import QueryPlanParseError
 from src.insightdf.llm import generate_query_plan
@@ -16,11 +17,17 @@ from src.insightdf.sql_guard import validate_read_only_sql
 
 
 @dataclass
+class ChartOutput:
+    title: str
+    figure: Figure
+
+
+@dataclass
 class AnalysisOutput:
     answer_text: str
     generated_sql: str | None
     table: pd.DataFrame | None
-    figure: object | None
+    figures: list[ChartOutput] | None
     debug_text: str | None = None
     note_text: str | None = None
 
@@ -47,7 +54,7 @@ def run_analysis(
             answer_text=str(error),
             generated_sql=None,
             table=None,
-            figure=None,
+            figures=None,
             debug_text=error.raw_response,
             note_text=prepared_question.note,
         )
@@ -69,13 +76,13 @@ def run_analysis(
         ) from error
 
     answer_text = _format_answer(result_table, query_plan.answer_template, prepared_question.resolved_question)
-    figure = _build_figure(result_table, query_plan)
+    figures = _build_figures(result_table, query_plan)
 
     return AnalysisOutput(
         answer_text=answer_text,
         generated_sql=safe_sql,
         table=result_table,
-        figure=figure,
+        figures=figures,
         note_text=prepared_question.note,
     )
 
@@ -102,8 +109,8 @@ def _format_answer(result_table: pd.DataFrame, answer_template: str, user_questi
     )
 
 
-def _build_figure(result_table: pd.DataFrame, query_plan) -> object | None:
-    """Create a chart only when the model requested a visualization."""
+def _build_figures(result_table: pd.DataFrame, query_plan) -> list[ChartOutput] | None:
+    """Create chart outputs that stay readable when multiple dimensions are returned."""
     if query_plan.analysis_type != "chart":
         return None
 
@@ -117,30 +124,127 @@ def _build_figure(result_table: pd.DataFrame, query_plan) -> object | None:
         series_column=query_plan.series_column,
     )
 
+    chart_outputs: list[ChartOutput] = []
+    primary_title = _build_chart_title(plot_frame)
+    primary_figure = _build_primary_figure(plot_frame, query_plan, primary_title)
+    chart_outputs.append(ChartOutput(title=primary_title, figure=primary_figure))
+
+    if plot_frame.categorical_columns:
+        first_extra_dimension = plot_frame.categorical_columns[0]
+        breakdown_title = (
+            f"{_humanize_label(plot_frame.y_column)} by {_humanize_label(plot_frame.x_column)} "
+            f"split by {_humanize_label(first_extra_dimension)}"
+        )
+        breakdown_figure = _build_faceted_bar_figure(
+            plot_frame=plot_frame,
+            facet_column=first_extra_dimension,
+            title=breakdown_title,
+        )
+        chart_outputs.append(ChartOutput(title=breakdown_title, figure=breakdown_figure))
+
+    return chart_outputs
+
+
+def _build_primary_figure(plot_frame, query_plan, title: str) -> Figure:
+    """Create the main chart using consistent labels and a stronger color palette."""
+    labels = _build_plot_labels(plot_frame)
+    color_sequence = px.colors.qualitative.Bold
+
     if query_plan.chart_type == "line":
-        return px.line(
+        figure = px.line(
             plot_frame.dataframe,
             x=plot_frame.x_column,
             y=plot_frame.y_column,
             color=plot_frame.series_column,
             markers=True,
+            title=title,
+            labels=labels,
+            color_discrete_sequence=color_sequence,
         )
-
-    if query_plan.chart_type == "scatter":
-        return px.scatter(
+    elif query_plan.chart_type == "scatter":
+        figure = px.scatter(
             plot_frame.dataframe,
             x=plot_frame.x_column,
             y=plot_frame.y_column,
             color=plot_frame.series_column,
+            title=title,
+            labels=labels,
+            color_discrete_sequence=color_sequence,
+        )
+    else:
+        figure = px.bar(
+            plot_frame.dataframe,
+            x=plot_frame.x_column,
+            y=plot_frame.y_column,
+            color=plot_frame.series_column,
+            barmode="group",
+            title=title,
+            labels=labels,
+            color_discrete_sequence=color_sequence,
         )
 
-    return px.bar(
+    return _style_figure(figure)
+
+
+def _build_faceted_bar_figure(plot_frame, facet_column: str, title: str) -> Figure:
+    """Create a clearer small-multiples comparison when extra categorical dimensions exist."""
+    figure = px.bar(
         plot_frame.dataframe,
         x=plot_frame.x_column,
         y=plot_frame.y_column,
         color=plot_frame.series_column,
+        facet_col=facet_column,
         barmode="group",
+        title=title,
+        labels=_build_plot_labels(plot_frame),
+        color_discrete_sequence=px.colors.qualitative.Set2,
     )
+    figure.for_each_annotation(
+        lambda annotation: annotation.update(
+            text=annotation.text.split("=")[-1].strip()
+        )
+    )
+    return _style_figure(figure)
+
+
+def _build_chart_title(plot_frame) -> str:
+    if plot_frame.series_column:
+        return (
+            f"{_humanize_label(plot_frame.y_column)} by {_humanize_label(plot_frame.x_column)} "
+            f"and {_humanize_label(plot_frame.series_column)}"
+        )
+    return f"{_humanize_label(plot_frame.y_column)} by {_humanize_label(plot_frame.x_column)}"
+
+
+def _build_plot_labels(plot_frame) -> dict[str, str]:
+    labels = {
+        plot_frame.x_column: _humanize_label(plot_frame.x_column),
+        plot_frame.y_column: _humanize_label(plot_frame.y_column),
+    }
+    if plot_frame.series_column:
+        labels[plot_frame.series_column] = _humanize_label(plot_frame.series_column)
+    if plot_frame.categorical_columns:
+        for column in plot_frame.categorical_columns:
+            labels[column] = _humanize_label(column)
+    return labels
+
+
+def _humanize_label(value: str) -> str:
+    return value.replace("_", " ").strip().title()
+
+
+def _style_figure(figure: Figure) -> Figure:
+    figure.update_layout(
+        legend_title_text=figure.layout.legend.title.text if figure.layout.legend else None,
+        template="plotly_white",
+        title_x=0.02,
+        title_font_size=20,
+        font=dict(size=14),
+        margin=dict(l=40, r=20, t=70, b=40),
+    )
+    figure.update_xaxes(showgrid=False, title_font=dict(size=15))
+    figure.update_yaxes(showgrid=True, gridcolor="#d9dde7", title_font=dict(size=15))
+    return figure
 
 
 def _quote_special_columns(sql: str, columns: pd.Index) -> str:
