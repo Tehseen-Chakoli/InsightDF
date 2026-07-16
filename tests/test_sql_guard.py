@@ -6,13 +6,13 @@ from src.insightdf.sql_guard import validate_read_only_sql
 
 
 def test_accepts_select_query_against_dataset() -> None:
-    sql = 'SELECT COUNT(*) AS total FROM dataset WHERE "Embarked" = \'C\''
+    sql = 'SELECT COUNT(*) AS total FROM dataset WHERE "region" = \'east\''
     assert validate_read_only_sql(sql) == sql
 
 
 def test_accepts_select_query_with_trailing_semicolon() -> None:
-    sql = 'SELECT COUNT(*) AS total FROM dataset WHERE "Embarked" = \'C\';'
-    assert validate_read_only_sql(sql) == 'SELECT COUNT(*) AS total FROM dataset WHERE "Embarked" = \'C\''
+    sql = 'SELECT COUNT(*) AS total FROM dataset WHERE "region" = \'east\';'
+    assert validate_read_only_sql(sql) == 'SELECT COUNT(*) AS total FROM dataset WHERE "region" = \'east\''
 
 
 def test_rejects_non_select_query() -> None:

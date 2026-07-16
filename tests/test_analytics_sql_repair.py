@@ -10,16 +10,16 @@ from src.insightdf.schema import build_dataset_profile
 
 def test_quotes_special_character_columns_in_generated_sql() -> None:
     columns = pd.Index(
-        ["Entity", "Population - Sex: all - Age: all - Variant: estimates"]
+        ["segment", "Net Sales (USD) - Adjusted"]
     )
     sql = (
-        "SELECT SUM(Population - Sex: all - Age: all - Variant: estimates) "
-        "FROM dataset WHERE Entity = 'India'"
+        "SELECT SUM(Net Sales (USD) - Adjusted) "
+        "FROM dataset WHERE segment = 'enterprise'"
     )
 
     repaired_sql = _quote_special_columns(sql, columns)
 
-    assert '"Population - Sex: all - Age: all - Variant: estimates"' in repaired_sql
+    assert '"Net Sales (USD) - Adjusted"' in repaired_sql
 
 
 def test_dataset_profile_contains_generic_numeric_summary_and_sample_rows() -> None:
@@ -47,45 +47,45 @@ def test_dataset_profile_contains_generic_numeric_summary_and_sample_rows() -> N
 
 def test_plot_sql_repair_replaces_bracketed_identifier_lists() -> None:
     sql = (
-        'SELECT "Year", "Entity", ["Population - Sex: all - Age: all - Variant: estimates"] AS population '
+        'SELECT "month", "region", ["Net Sales (USD) - Adjusted"] AS revenue '
         'FROM dataset'
     )
 
     repaired_sql = repair_plot_sql(sql)
 
-    assert '["Population - Sex: all - Age: all - Variant: estimates"]' not in repaired_sql
-    assert '"Population - Sex: all - Age: all - Variant: estimates" AS population' in repaired_sql
+    assert '["Net Sales (USD) - Adjusted"]' not in repaired_sql
+    assert '"Net Sales (USD) - Adjusted" AS revenue' in repaired_sql
 
 
 def test_prepare_plot_frame_flattens_single_item_lists_for_numeric_plotting() -> None:
     result_table = pd.DataFrame(
         {
-            "Year": [1950, 1951],
-            "Entity": ["Afghanistan", "India"],
-            "population": [[7776182], [353870058]],
+            "month": ["Jan", "Feb"],
+            "region": ["east", "west"],
+            "revenue": [[1250], [1630]],
         }
     )
 
     plot_frame = prepare_plot_frame(
         result_table=result_table,
-        x_column="Year",
-        y_column="population",
-        series_column="Entity",
+        x_column="month",
+        y_column="revenue",
+        series_column="region",
     )
 
-    assert plot_frame.x_column == "Year"
-    assert plot_frame.y_column == "population"
-    assert plot_frame.series_column == "Entity"
-    assert plot_frame.dataframe["population"].tolist() == [7776182, 353870058]
+    assert plot_frame.x_column == "month"
+    assert plot_frame.y_column == "revenue"
+    assert plot_frame.series_column == "region"
+    assert plot_frame.dataframe["revenue"].tolist() == [1250, 1630]
 
 
 def test_build_figures_adds_faceted_breakdown_for_multi_dimension_chart_results() -> None:
     result_table = pd.DataFrame(
         {
-            "Embarked": ["C", "C", "S", "S"],
-            "Sex": ["female", "male", "female", "male"],
-            "Pclass": [1, 1, 2, 2],
-            "survived_count": [15, 5, 40, 18],
+            "region": ["east", "east", "west", "west"],
+            "channel": ["online", "retail", "online", "retail"],
+            "quarter": [1, 1, 2, 2],
+            "order_count": [15, 5, 40, 18],
         }
     )
     query_plan = QueryPlan(
@@ -93,14 +93,14 @@ def test_build_figures_adds_faceted_breakdown_for_multi_dimension_chart_results(
         sql="SELECT 1",
         reasoning="chart",
         chart_type="bar",
-        x_column="Embarked",
-        y_column="survived_count",
-        series_column="Sex",
+        x_column="region",
+        y_column="order_count",
+        series_column="channel",
     )
 
     chart_outputs = _build_figures(result_table, query_plan)
 
     assert chart_outputs is not None
     assert len(chart_outputs) == 2
-    assert "Survived Count By Embarked And Sex" == chart_outputs[0].title
-    assert "split by Pclass" in chart_outputs[1].title
+    assert "Order Count By Region And Channel" == chart_outputs[0].title
+    assert "split by Quarter" in chart_outputs[1].title

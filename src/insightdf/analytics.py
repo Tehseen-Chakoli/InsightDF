@@ -8,8 +8,9 @@ import pandas as pd
 import plotly.express as px
 from plotly.graph_objects import Figure
 
+from src.insightdf.chart_recommender import recommend_chart
 from src.insightdf.errors import QueryPlanParseError
-from src.insightdf.llm import generate_query_plan
+from src.insightdf.llm import generate_query_plan, repair_sql_query
 from src.insightdf.plot_guard import prepare_plot_frame, repair_plot_sql
 from src.insightdf.question_guard import prepare_question_for_analysis
 from src.insightdf.query_models import DatasetProfile
@@ -30,12 +31,14 @@ class AnalysisOutput:
     figures: list[ChartOutput] | None
     debug_text: str | None = None
     note_text: str | None = None
+    sql_explanation: str | None = None
 
 
 def run_analysis(
     dataframe: pd.DataFrame,
     profile: DatasetProfile,
     user_question: str,
+    conversation_history: list[dict[str, str]] | None = None,
 ) -> AnalysisOutput:
     """Plan the analysis, execute it against DuckDB, and format the response."""
     prepared_question = prepare_question_for_analysis(
@@ -48,6 +51,7 @@ def run_analysis(
         query_plan = generate_query_plan(
             profile=profile,
             user_question=prepared_question.resolved_question,
+            conversation_history=conversation_history,
         )
     except QueryPlanParseError as error:
         return AnalysisOutput(
@@ -57,34 +61,88 @@ def run_analysis(
             figures=None,
             debug_text=error.raw_response,
             note_text=prepared_question.note,
+            sql_explanation=None,
         )
-
-    repaired_sql = _quote_special_columns(query_plan.sql, dataframe.columns)
-    if query_plan.analysis_type == "chart":
-        repaired_sql = repair_plot_sql(repaired_sql)
-    safe_sql = validate_read_only_sql(repaired_sql)
 
     connection = duckdb.connect(database=":memory:")
     # Register the uploaded dataframe as a virtual SQL table for deterministic computation.
     connection.register("dataset", dataframe)
     try:
-        result_table = connection.execute(safe_sql).df()
-    except duckdb.Error as error:
-        raise ValueError(
-            "I could not run the generated query on this dataset. "
-            "Please try a more specific question or use exact field/value names from the uploaded data."
-        ) from error
+        safe_sql, result_table, correction_note = _execute_query_with_correction(
+            connection=connection,
+            dataframe=dataframe,
+            profile=profile,
+            user_question=prepared_question.resolved_question,
+            initial_sql=query_plan.sql,
+            analysis_type=query_plan.analysis_type,
+            conversation_history=conversation_history,
+        )
+    finally:
+        connection.close()
 
     answer_text = _format_answer(result_table, query_plan.answer_template, prepared_question.resolved_question)
-    figures = _build_figures(result_table, query_plan)
+    figures, chart_note = _build_figures(result_table, query_plan)
+
+    note_text = _merge_notes(prepared_question.note, correction_note, chart_note)
 
     return AnalysisOutput(
         answer_text=answer_text,
         generated_sql=safe_sql,
         table=result_table,
         figures=figures,
-        note_text=prepared_question.note,
+        note_text=note_text,
+        sql_explanation=query_plan.reasoning,
     )
+
+
+def _execute_query_with_correction(
+    connection: duckdb.DuckDBPyConnection,
+    dataframe: pd.DataFrame,
+    profile: DatasetProfile,
+    user_question: str,
+    initial_sql: str,
+    analysis_type: str,
+    conversation_history: list[dict[str, str]] | None,
+) -> tuple[str, pd.DataFrame, str | None]:
+    """Execute SQL and optionally repair it with the LLM if DuckDB reports an error."""
+    current_sql = initial_sql
+    correction_note: str | None = None
+    last_error: duckdb.Error | None = None
+
+    for attempt in range(3):
+        safe_sql = _prepare_sql_for_execution(current_sql, dataframe.columns, analysis_type)
+        try:
+            return safe_sql, connection.execute(safe_sql).df(), correction_note
+        except duckdb.Error as error:
+            last_error = error
+            if attempt == 2:
+                break
+            repair_plan = repair_sql_query(
+                profile=profile,
+                user_question=user_question,
+                failed_sql=safe_sql,
+                database_error=str(error),
+                conversation_history=conversation_history,
+            )
+            if repair_plan is None:
+                break
+            current_sql = repair_plan.sql
+            correction_note = (
+                "The first generated SQL failed during execution, so the app automatically repaired it "
+                "and retried the query."
+            )
+
+    raise ValueError(
+        "I could not run the generated query on this dataset. "
+        "Please try a more specific question or use exact field/value names from the uploaded data."
+    ) from last_error
+
+
+def _prepare_sql_for_execution(sql: str, columns: pd.Index, analysis_type: str) -> str:
+    repaired_sql = _quote_special_columns(sql, columns)
+    if analysis_type == "chart":
+        repaired_sql = repair_plot_sql(repaired_sql)
+    return validate_read_only_sql(repaired_sql)
 
 
 def _format_answer(result_table: pd.DataFrame, answer_template: str, user_question: str) -> str:
@@ -109,13 +167,13 @@ def _format_answer(result_table: pd.DataFrame, answer_template: str, user_questi
     )
 
 
-def _build_figures(result_table: pd.DataFrame, query_plan) -> list[ChartOutput] | None:
+def _build_figures(result_table: pd.DataFrame, query_plan) -> tuple[list[ChartOutput] | None, str | None]:
     """Create chart outputs that stay readable when multiple dimensions are returned."""
     if query_plan.analysis_type != "chart":
-        return None
+        return None, None
 
     if result_table.empty:
-        return None
+        return None, None
 
     plot_frame = prepare_plot_frame(
         result_table=result_table,
@@ -123,34 +181,41 @@ def _build_figures(result_table: pd.DataFrame, query_plan) -> list[ChartOutput] 
         y_column=query_plan.y_column,
         series_column=query_plan.series_column,
     )
+    recommendation = recommend_chart(
+        dataframe=plot_frame.dataframe,
+        x_column=plot_frame.x_column,
+        y_column=plot_frame.y_column,
+        series_column=plot_frame.series_column,
+        categorical_columns=plot_frame.categorical_columns,
+        requested_chart_type=query_plan.chart_type,
+    )
 
     chart_outputs: list[ChartOutput] = []
     primary_title = _build_chart_title(plot_frame)
-    primary_figure = _build_primary_figure(plot_frame, query_plan, primary_title)
+    primary_figure = _build_primary_figure(plot_frame, recommendation.chart_type, primary_title)
     chart_outputs.append(ChartOutput(title=primary_title, figure=primary_figure))
 
-    if plot_frame.categorical_columns:
-        first_extra_dimension = plot_frame.categorical_columns[0]
+    if recommendation.facet_column:
         breakdown_title = (
             f"{_humanize_label(plot_frame.y_column)} by {_humanize_label(plot_frame.x_column)} "
-            f"split by {_humanize_label(first_extra_dimension)}"
+            f"split by {_humanize_label(recommendation.facet_column)}"
         )
         breakdown_figure = _build_faceted_bar_figure(
             plot_frame=plot_frame,
-            facet_column=first_extra_dimension,
+            facet_column=recommendation.facet_column,
             title=breakdown_title,
         )
         chart_outputs.append(ChartOutput(title=breakdown_title, figure=breakdown_figure))
 
-    return chart_outputs
+    return chart_outputs, f"Chart recommendation: {recommendation.reason}"
 
 
-def _build_primary_figure(plot_frame, query_plan, title: str) -> Figure:
+def _build_primary_figure(plot_frame, chart_type: str, title: str) -> Figure:
     """Create the main chart using consistent labels and a stronger color palette."""
     labels = _build_plot_labels(plot_frame)
     color_sequence = px.colors.qualitative.Bold
 
-    if query_plan.chart_type == "line":
+    if chart_type == "line":
         figure = px.line(
             plot_frame.dataframe,
             x=plot_frame.x_column,
@@ -161,7 +226,7 @@ def _build_primary_figure(plot_frame, query_plan, title: str) -> Figure:
             labels=labels,
             color_discrete_sequence=color_sequence,
         )
-    elif query_plan.chart_type == "scatter":
+    elif chart_type == "scatter":
         figure = px.scatter(
             plot_frame.dataframe,
             x=plot_frame.x_column,
@@ -245,6 +310,13 @@ def _style_figure(figure: Figure) -> Figure:
     figure.update_xaxes(showgrid=False, title_font=dict(size=15))
     figure.update_yaxes(showgrid=True, gridcolor="#d9dde7", title_font=dict(size=15))
     return figure
+
+
+def _merge_notes(*notes: str | None) -> str | None:
+    merged_notes = [note for note in notes if note]
+    if not merged_notes:
+        return None
+    return " ".join(merged_notes)
 
 
 def _quote_special_columns(sql: str, columns: pd.Index) -> str:

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import pandas as pd
+import streamlit as st
 
 from src.insightdf.query_models import ColumnProfile, DatasetProfile, NumericSummary
 
 
+@st.cache_data(show_spinner=False)
 def build_dataset_profile(dataframe: pd.DataFrame) -> DatasetProfile:
     """Summarize the dataset so the model can reason over an arbitrary schema."""
     columns: list[ColumnProfile] = []

@@ -43,6 +43,11 @@ class QueryPlan(BaseModel):
     series_column: str | None = None
 
 
+class SQLRepairPlan(BaseModel):
+    sql: str
+    reasoning: str
+
+
 class AnalysisResult(BaseModel):
     answer_text: str
     generated_sql: str | None = None

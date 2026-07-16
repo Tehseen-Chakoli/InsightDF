@@ -10,7 +10,7 @@ from pydantic import ValidationError
 
 from src.insightdf.config import DEFAULT_GROQ_MODEL, DEFAULT_LLM_PROVIDER
 from src.insightdf.errors import QueryPlanParseError
-from src.insightdf.query_models import DatasetProfile, QueryPlan
+from src.insightdf.query_models import DatasetProfile, QueryPlan, SQLRepairPlan
 
 
 SYSTEM_PROMPT = """
@@ -40,6 +40,8 @@ Rules:
 - When the user asks for a comparison or plot, produce grouped SQL suitable for plotting.
 - Only infer the closest matching column or value when the match is strongly supported by the dataset profile. Otherwise, do not guess.
 - Prefer columns whose names, sample values, top values, or numeric summaries best match the user's wording.
+- Use conversation history only when the current question clearly refers to earlier context such as "that", "those", "same", "compare with previous", or similar follow-up language.
+- If the current question is self-contained, ignore prior conversation context.
 - When the user does not include a question mark, still read the sentence normally and answer based on the same rules.
 - When the question is incomplete or unrelated to the dataset, use this pattern:
   {
@@ -70,6 +72,23 @@ RETRY_PROMPT = (
     "Return only one valid JSON object with no explanation, no markdown, and no extra text."
 )
 
+SQL_REPAIR_PROMPT = """
+You repair DuckDB SQL queries for a single uploaded table named dataset.
+
+Rules:
+- Return valid JSON only.
+- Return only read-only SQL against the table named dataset.
+- Keep the repaired query as close as possible to the original analytical intent.
+- Use the dataset profile, original user question, and database error message to fix the SQL.
+- Do not invent unsupported columns, filters, or values.
+- Preserve quoted identifiers for unusual column names.
+- Output JSON in this shape:
+  {
+    "sql": "...",
+    "reasoning": "..."
+  }
+""".strip()
+
 
 def _build_chat_model():
     """Create the configured chat model behind a provider-agnostic interface."""
@@ -89,13 +108,18 @@ def _build_chat_model():
     )
 
 
-def generate_query_plan(profile: DatasetProfile, user_question: str) -> QueryPlan:
+def generate_query_plan(
+    profile: DatasetProfile,
+    user_question: str,
+    conversation_history: list[dict[str, str]] | None = None,
+) -> QueryPlan:
     """Ask the language model for a structured analytical plan."""
     chat_model = _build_chat_model()
     prompt = {
         # The model sees only a compact schema summary so we avoid sending the full dataset.
         "dataset_profile": profile.model_dump(),
         "user_question": user_question,
+        "conversation_history": conversation_history or [],
     }
 
     messages = [
@@ -121,6 +145,43 @@ def generate_query_plan(profile: DatasetProfile, user_question: str) -> QueryPla
         "Try rephrasing the question or using a model with stronger JSON reliability.",
         raw_response=last_response_text,
     )
+
+
+def repair_sql_query(
+    profile: DatasetProfile,
+    user_question: str,
+    failed_sql: str,
+    database_error: str,
+    conversation_history: list[dict[str, str]] | None = None,
+) -> SQLRepairPlan | None:
+    """Ask the model to repair SQL after DuckDB reports an execution error."""
+    chat_model = _build_chat_model()
+    prompt = {
+        "dataset_profile": profile.model_dump(),
+        "user_question": user_question,
+        "conversation_history": conversation_history or [],
+        "failed_sql": failed_sql,
+        "database_error": database_error,
+    }
+
+    messages = [
+        SystemMessage(content=SQL_REPAIR_PROMPT),
+        HumanMessage(content=json.dumps(prompt)),
+    ]
+
+    last_response_text = ""
+    for attempt in range(2):
+        response = chat_model.invoke(messages)
+        last_response_text = str(response.content).strip()
+
+        try:
+            return SQLRepairPlan.model_validate_json(_extract_json_object(last_response_text))
+        except (ValidationError, ValueError):
+            if attempt == 0:
+                messages.append(HumanMessage(content=RETRY_PROMPT))
+                continue
+
+    return None
 
 
 def _extract_json_object(response_text: str) -> str:

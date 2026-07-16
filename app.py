@@ -5,6 +5,7 @@ import streamlit as st
 from src.insightdf.analytics import run_analysis
 from src.insightdf.config import APP_TITLE, SUPPORTED_FILE_TYPES
 from src.insightdf.data_loader import load_uploaded_file
+from src.insightdf.insights import build_dataset_insights
 from src.insightdf.schema import build_dataset_profile
 
 
@@ -22,8 +23,10 @@ def _initialize_session_state(dataset_key: str) -> None:
     if current_dataset_key != dataset_key:
         st.session_state["dataset_key"] = dataset_key
         st.session_state["analysis_history"] = []
+        st.session_state["analysis_cache"] = {}
 
     st.session_state.setdefault("analysis_history", [])
+    st.session_state.setdefault("analysis_cache", {})
 
 
 def _inject_button_styles() -> None:
@@ -88,6 +91,10 @@ def _render_analysis_entry(entry_number: int, question: str, result) -> None:
         with st.expander("Generated SQL"):
             st.code(result.generated_sql, language="sql")
 
+    if result.sql_explanation:
+        with st.expander("SQL explanation"):
+            st.write(result.sql_explanation)
+
     if result.table is not None and not result.table.empty:
         st.subheader("Result table")
         st.dataframe(result.table, use_container_width=True)
@@ -122,6 +129,7 @@ def main() -> None:
 
     dataframe = load_uploaded_file(uploaded_file)
     profile = build_dataset_profile(dataframe)
+    dataset_insights = build_dataset_insights(dataframe, profile)
 
     with st.expander("Preview dataset", expanded=True):
         left, right = st.columns([2, 1])
@@ -133,6 +141,10 @@ def main() -> None:
 
     with st.expander("Detected schema"):
         st.json(profile.model_dump())
+
+    with st.expander("Automatic insights", expanded=True):
+        for insight in dataset_insights:
+            st.write(f"- {insight}")
 
     user_question = st.text_area(
         "Ask your query",
@@ -148,11 +160,20 @@ def main() -> None:
         try:
             # Keep the app flow thin here and delegate the heavy lifting to the analytics layer.
             with st.spinner("Understanding the dataset and running the analysis..."):
-                result = run_analysis(
-                    dataframe=dataframe,
-                    profile=profile,
-                    user_question=user_question,
-                )
+                conversation_history = _build_conversation_history(st.session_state["analysis_history"])
+                cache_key = _build_analysis_cache_key(user_question, conversation_history)
+                cached_result = st.session_state["analysis_cache"].get(cache_key)
+
+                if cached_result is None:
+                    result = run_analysis(
+                        dataframe=dataframe,
+                        profile=profile,
+                        user_question=user_question,
+                        conversation_history=conversation_history,
+                    )
+                    st.session_state["analysis_cache"][cache_key] = result
+                else:
+                    result = cached_result
         except Exception as error:
             st.error(str(error))
             return
@@ -172,6 +193,31 @@ def main() -> None:
             question=entry["question"],
             result=entry["result"],
         )
+
+
+def _build_conversation_history(analysis_history: list[dict]) -> list[dict[str, str]]:
+    """Keep a short structured memory of recent queries for follow-up questions."""
+    recent_entries = analysis_history[-3:]
+    conversation_history: list[dict[str, str]] = []
+    for entry in recent_entries:
+        result = entry["result"]
+        conversation_history.append(
+            {
+                "question": entry["question"],
+                "answer": result.answer_text,
+                "sql": result.generated_sql or "",
+            }
+        )
+    return conversation_history
+
+
+def _build_analysis_cache_key(
+    user_question: str,
+    conversation_history: list[dict[str, str]],
+) -> str:
+    """Cache repeated analyses while respecting short follow-up memory."""
+    context_signature = "|".join(item["question"] for item in conversation_history)
+    return f"{user_question.strip()}::{context_signature}"
 
 
 if __name__ == "__main__":
