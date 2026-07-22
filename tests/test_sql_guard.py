@@ -25,6 +25,16 @@ def test_rejects_query_without_dataset_reference() -> None:
         validate_read_only_sql("SELECT 1")
 
 
+def test_rejects_dataset_name_only_inside_alias() -> None:
+    with pytest.raises(ValueError):
+        validate_read_only_sql("SELECT 1 AS dataset")
+
+
+def test_ignores_dataset_word_inside_string_literal() -> None:
+    with pytest.raises(ValueError):
+        validate_read_only_sql("SELECT 'dataset' AS label")
+
+
 def test_rejects_multiple_statements() -> None:
     with pytest.raises(ValueError):
         validate_read_only_sql("SELECT * FROM dataset; SELECT 1")

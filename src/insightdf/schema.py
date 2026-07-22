@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import date, datetime
+
 import pandas as pd
 import streamlit as st
 
@@ -34,7 +36,7 @@ def build_dataset_profile(dataframe: pd.DataFrame) -> DatasetProfile:
         )
 
     sample_rows = [
-        {str(column): str(value) for column, value in row.items()}
+        {str(column): _normalize_sample_value(value) for column, value in row.items()}
         for row in dataframe.head(3).to_dict(orient="records")
     ]
 
@@ -61,3 +63,17 @@ def _build_numeric_summary(series: pd.Series) -> NumericSummary | None:
         median_value=float(cleaned_series.median()),
         sum_value=float(cleaned_series.sum()),
     )
+
+
+def _normalize_sample_value(value: object) -> object | None:
+    """Keep sample rows JSON-friendly without throwing away useful type information."""
+    if pd.isna(value):
+        return None
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    if hasattr(value, "item"):
+        try:
+            return value.item()
+        except (ValueError, TypeError):
+            return str(value)
+    return value

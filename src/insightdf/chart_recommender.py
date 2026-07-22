@@ -38,7 +38,7 @@ def recommend_chart(
             reason="The x-axis looks ordered or time-like, so a line chart is suitable.",
         )
 
-    if _supports_line(dataframe, x_column) and dataframe[x_column].nunique(dropna=True) > 4:
+    if _supports_line(dataframe, x_column):
         return ChartRecommendation(
             chart_type="line",
             facet_column=facet_column,

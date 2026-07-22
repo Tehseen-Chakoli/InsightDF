@@ -98,9 +98,11 @@ def test_build_figures_adds_faceted_breakdown_for_multi_dimension_chart_results(
         series_column="channel",
     )
 
-    chart_outputs = _build_figures(result_table, query_plan)
+    figure_result = _build_figures(result_table, query_plan)
+    chart_outputs = figure_result.outputs
 
     assert chart_outputs is not None
     assert len(chart_outputs) == 2
-    assert "Order Count By Region And Channel" == chart_outputs[0].title
+    assert "Order Count by Region and Channel" == chart_outputs[0].title
     assert "split by Quarter" in chart_outputs[1].title
+    assert figure_result.note_text is not None

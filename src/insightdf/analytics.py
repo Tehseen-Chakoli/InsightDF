@@ -34,6 +34,12 @@ class AnalysisOutput:
     sql_explanation: str | None = None
 
 
+@dataclass
+class FigureBuildResult:
+    outputs: list[ChartOutput] | None
+    note_text: str | None = None
+
+
 def run_analysis(
     dataframe: pd.DataFrame,
     profile: DatasetProfile,
@@ -80,16 +86,20 @@ def run_analysis(
     finally:
         connection.close()
 
-    answer_text = _format_answer(result_table, query_plan.answer_template, prepared_question.resolved_question)
-    figures, chart_note = _build_figures(result_table, query_plan)
+    answer_text = _format_answer(
+        result_table=result_table,
+        answer_template=query_plan.answer_template,
+        user_question=prepared_question.resolved_question,
+    )
+    figure_result = _build_figures(result_table, query_plan)
 
-    note_text = _merge_notes(prepared_question.note, correction_note, chart_note)
+    note_text = _merge_notes(prepared_question.note, correction_note, figure_result.note_text)
 
     return AnalysisOutput(
         answer_text=answer_text,
         generated_sql=safe_sql,
         table=result_table,
-        figures=figures,
+        figures=figure_result.outputs,
         note_text=note_text,
         sql_explanation=query_plan.reasoning,
     )
@@ -152,6 +162,8 @@ def _format_answer(result_table: pd.DataFrame, answer_template: str, user_questi
 
     if len(result_table) == 1 and len(result_table.columns) == 1:
         only_value = result_table.iloc[0, 0]
+        if _should_return_scalar_message(answer_template):
+            return str(only_value)
         return f"The exact answer is {only_value}."
 
     if len(result_table) == 1:
@@ -167,13 +179,13 @@ def _format_answer(result_table: pd.DataFrame, answer_template: str, user_questi
     )
 
 
-def _build_figures(result_table: pd.DataFrame, query_plan) -> tuple[list[ChartOutput] | None, str | None]:
+def _build_figures(result_table: pd.DataFrame, query_plan) -> FigureBuildResult:
     """Create chart outputs that stay readable when multiple dimensions are returned."""
     if query_plan.analysis_type != "chart":
-        return None, None
+        return FigureBuildResult(outputs=None, note_text=None)
 
     if result_table.empty:
-        return None, None
+        return FigureBuildResult(outputs=None, note_text=None)
 
     plot_frame = prepare_plot_frame(
         result_table=result_table,
@@ -207,7 +219,10 @@ def _build_figures(result_table: pd.DataFrame, query_plan) -> tuple[list[ChartOu
         )
         chart_outputs.append(ChartOutput(title=breakdown_title, figure=breakdown_figure))
 
-    return chart_outputs, f"Chart recommendation: {recommendation.reason}"
+    return FigureBuildResult(
+        outputs=chart_outputs,
+        note_text=f"Chart recommendation: {recommendation.reason}",
+    )
 
 
 def _build_primary_figure(plot_frame, chart_type: str, title: str) -> Figure:
@@ -317,6 +332,11 @@ def _merge_notes(*notes: str | None) -> str | None:
     if not merged_notes:
         return None
     return " ".join(merged_notes)
+
+
+def _should_return_scalar_message(answer_template: str) -> bool:
+    normalized_template = answer_template.strip().casefold()
+    return "return the message from the sql result directly" in normalized_template
 
 
 def _quote_special_columns(sql: str, columns: pd.Index) -> str:

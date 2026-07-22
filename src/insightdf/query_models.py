@@ -27,7 +27,7 @@ class DatasetProfile(BaseModel):
     row_count: int
     column_count: int
     columns: list[ColumnProfile]
-    sample_rows: list[dict[str, str]] = Field(default_factory=list)
+    sample_rows: list[dict[str, object | None]] = Field(default_factory=list)
 
 
 class QueryPlan(BaseModel):

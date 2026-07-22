@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "insightdf"
+version = "0.1.0"
+description = "Natural-language analytics over uploaded tabular datasets."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "streamlit>=1.37.0",
+    "pandas>=2.2.2",
+    "openpyxl>=3.1.5",
+    "duckdb>=1.0.0",
+    "plotly>=5.23.0",
+    "langchain>=0.2.14",
+    "langchain-groq>=0.1.9",
+    "pydantic>=2.8.2",
+    "python-dotenv>=1.0.1",
+]
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src", "src.*"]
